@@ -24,7 +24,7 @@ void decodeAndWriteKeyFile(String keyB64) {
   file.writeAsBytesSync(bytes);
 }
 
-void writeKeyProperties(String password) {
+void writeKeyProperties(String password, String alias) {
   var file = File("android/key.properties");
   if (!file.existsSync()) {
     file.createSync(recursive: true);
@@ -33,7 +33,7 @@ void writeKeyProperties(String password) {
   file.writeAsStringSync("""
 storePassword=$password
 keyPassword=$password
-keyAlias=key
+keyAlias=$alias
 storeFile=../key.jks
 """);
 }
@@ -49,7 +49,8 @@ void main(List<String> args) {
 
   String keyData = getArg(args, "--key_b64")!;
   String keyPassword = getArg(args, "--key_password")!;
+  String keyAlias = getArg(args, "--key_alias") ?? "commet";
 
   decodeAndWriteKeyFile(keyData);
-  writeKeyProperties(keyPassword);
+  writeKeyProperties(keyPassword, keyAlias);
 }
