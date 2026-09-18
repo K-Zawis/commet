@@ -1,19 +1,16 @@
-import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import 'package:exif/exif.dart';
+import 'package:intl/intl.dart';
+import 'package:tiamat/tiamat.dart' as tiamat;
 
 import 'package:commet/client/attachment.dart';
 import 'package:commet/ui/atoms/scaled_safe_area.dart';
 import 'package:commet/ui/molecules/file_preview.dart';
 import 'package:commet/ui/molecules/video_player/video_player_controller.dart';
+import 'package:commet/utils/image_utils.dart';
 import 'package:commet/utils/mime.dart';
-import 'package:exif/exif.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:intl/intl.dart';
-import 'package:path/path.dart' as path;
-import 'package:image/image.dart' as img;
-import 'package:tiamat/tiamat.dart' as tiamat;
 
 class AttachmentProcessor extends StatefulWidget {
   const AttachmentProcessor({required this.attachment, super.key});
@@ -51,17 +48,15 @@ class _AttachmentProcessorState extends State<AttachmentProcessor> {
   @override
   void initState() {
     icon = Mime.toIcon(widget.attachment.mimeType);
+
     if (Mime.imageTypes.contains(widget.attachment.mimeType)) {
       loadExif();
-      canProcessData = true;
-
-      if (widget.attachment.mimeType == "image/gif") {
-        canProcessData = false;
-      }
+      canProcessData = widget.attachment.mimeType != "image/gif";
     } else if (Mime.videoTypes.contains(widget.attachment.mimeType)) {
       videoController = VideoPlayerController();
       canProcessData = true;
     }
+
     super.initState();
   }
 
@@ -74,19 +69,11 @@ class _AttachmentProcessorState extends State<AttachmentProcessor> {
   }
 
   void loadExif() async {
-    late Map<String, IfdTag> data;
-    if (widget.attachment.data != null) {
-      data = await readExifFromBytes(widget.attachment.data!);
-    } else {
-      data = await readExifFromFile(File(widget.attachment.path!));
-    }
+    final hasGps = await widget.attachment.hasGpsData();
+    if (!mounted) return;
 
     setState(() {
-      if (data.keys.any((e) => e.toLowerCase().contains("gps"))) {
-        containsGpsData = true;
-      }
-
-      exifData = data;
+      containsGpsData = hasGps;
     });
   }
 
@@ -195,144 +182,42 @@ class _AttachmentProcessorState extends State<AttachmentProcessor> {
   }
 
   void submit() async {
-    if (canProcessData == false || sendOriginalFile) {
+    if (!canProcessData || sendOriginalFile) {
       Navigator.of(context).pop(widget.attachment);
-    } else {
-      setState(() {
-        processing = true;
-      });
-      var file = await processFile();
-      if (mounted) {
-        Navigator.of(context).pop(file);
-      }
+      return;
     }
-  }
 
-  /// Helper to resolve MIME type using dynamic magic-number stream reads
-  static Future<String> _resolveMimeType(
-      PendingFileAttachment attachment) async {
-    var mimeType = attachment.mimeType?.toLowerCase();
-    if ((mimeType == null || mimeType.isEmpty) && attachment.path != null) {
-      try {
-        final file = File(attachment.path!);
-        if (await file.exists()) {
-          final stream = file.openRead(0, Mime.magicNumbersMaxLength);
-          final headerBytes = (await stream.first) as Uint8List;
-          mimeType = Mime.lookupType(
-            attachment.path!,
-            data: headerBytes,
-          )?.toLowerCase();
-        }
-      } catch (_) {
-        mimeType = Mime.lookupType(attachment.path!)?.toLowerCase();
-      }
-    }
-    return mimeType ?? "";
+    setState(() => processing = true);
+
+    var file = await processFile();
+
+    if (mounted) Navigator.of(context).pop(file);
   }
 
   Future<PendingFileAttachment> processFile() async {
-    final mimeType = await _resolveMimeType(widget.attachment);
+    final mimeType = widget.attachment.mimeType?.toLowerCase() ??
+        await Mime.resolveType(
+          widget.attachment.path,
+          data: widget.attachment.data,
+        );
 
-    if (Mime.imageTypes.contains(mimeType)) return await processImage();
+    if (Mime.imageTypes.contains(mimeType)) return await processImage(mimeType);
     if (Mime.videoTypes.contains(mimeType)) return await processVideo();
 
     return widget.attachment;
   }
 
-  Future<PendingFileAttachment> processImage() async {
-    var mimeType = await _resolveMimeType(widget.attachment);
-
-    final bool supportsNativeCompress = !kIsWeb &&
-        (Platform.isAndroid ||
-            Platform.isIOS ||
-            Platform.isMacOS ||
-            Platform.isLinux);
-
-    final format = switch (mimeType) {
-      'image/jpeg' || 'image/jpg' => CompressFormat.jpeg,
-      'image/png' => CompressFormat.png,
-      'image/webp' => CompressFormat.webp,
-      _ => null,
-    };
-
-    if (!supportsNativeCompress || format == null) {
-      return await compute(_fallbackProcessImage,
-          (attachment: widget.attachment, mimeType: mimeType));
-    }
-
-    try {
-      Uint8List? processedData;
-
-      if (widget.attachment.path != null) {
-        processedData = await FlutterImageCompress.compressWithFile(
-          widget.attachment.path!,
-          keepExif: false,
-          quality: 100,
-          format: format,
-        );
-      } else if (widget.attachment.data != null) {
-        processedData = await FlutterImageCompress.compressWithList(
-          widget.attachment.data!,
-          keepExif: false,
-          quality: 100,
-          format: format,
-        );
-      }
-
-      if (processedData != null) {
-        return PendingFileAttachment(
-          name: widget.attachment.name,
-          data: processedData,
-          size: processedData.lengthInBytes,
-          mimeType: mimeType,
-        );
-      }
-    } catch (_) {}
-
-    // Fallback if native compression returned null or threw an error
-    return await compute(_fallbackProcessImage,
-        (attachment: widget.attachment, mimeType: mimeType));
-  }
-
-  /// Pure-Dart fallback isolate worker for Windows / Linux
-  static Future<PendingFileAttachment> _fallbackProcessImage(
-      ({PendingFileAttachment attachment, String mimeType}) args) async {
-    img.Image? image;
-
-    final attachment = args.attachment;
-    String mime = args.mimeType.isEmpty ? "image/png" : args.mimeType;
-
-    if (attachment.path != null) {
-      image = await img.decodeImageFile(attachment.path!);
-    } else if (attachment.data != null) {
-      image = img.decodeImage(attachment.data!);
-    }
-
-    if (image == null) throw Exception("Unable to decode image file.");
-
-    image.exif.clear();
-
-    Uint8List? processedData;
-    String? name = attachment.name;
-
-    if (attachment.name != null) {
-      processedData = img.encodeNamedImage(attachment.name!, image);
-    }
-
-    if (processedData == null) {
-      processedData = img.encodePng(image);
-      mime = "image/png";
-      var fileName = attachment.name ?? "untitled.png";
-      var rawName = path.basenameWithoutExtension(fileName);
-      name = "$rawName.png";
-    }
-
-    return PendingFileAttachment(
-      name: name,
-      data: processedData,
-      size: processedData.lengthInBytes,
-      mimeType: mime,
+  Future<PendingFileAttachment> processImage(String mimeType) async {
+    final result = await ImageUtils.processImage(
+      path: widget.attachment.path,
+      data: widget.attachment.data,
+      name: widget.attachment.name,
+      sourceMimeType: mimeType,
+      quality: 100,
+      stripExif: true,
     );
+
+    return await PendingFileAttachment.fromProcessedImage(result);
   }
 
   Future<PendingFileAttachment> processVideo() async {
