@@ -1,5 +1,7 @@
+import 'dart:io' show File;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:matrix/matrix.dart';
 
@@ -68,18 +70,20 @@ class Mime {
     "bmp": "image/bmp"
   };
 
-  static String? fromExtenstion(String extension) {
-    return extensionToMime.tryGet(extension);
-  }
+  static const mimeToExtension = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/bmp": "bmp",
+  };
 
   static String? extensionFromMime(String mimeType) {
-    for (var pair in extensionToMime.entries) {
-      if (pair.value == mimeType) {
-        return pair.key;
-      }
-    }
+    return mimeToExtension[mimeType.toLowerCase()];
+  }
 
-    return null;
+  static String? fromExtenstion(String extension) {
+    return extensionToMime.tryGet(extension);
   }
 
   static IconData toIcon(String? mimeType) {
@@ -92,5 +96,35 @@ class Mime {
 
   static String? lookupType(String filepath, {Uint8List? data}) {
     return _resolver.lookup(filepath, headerBytes: data);
+  }
+
+  static Future<String> resolveType(
+    String? path, {
+    Uint8List? data,
+  }) async {
+    final hasInMemoryBytes = data != null && data.isNotEmpty;
+    if (hasInMemoryBytes)
+      return lookupType(path ?? "", data: data)?.toLowerCase() ?? "";
+
+    final canStreamFromFile = !kIsWeb && path != null && path.isNotEmpty;
+    if (canStreamFromFile) return _resolveFromFileHeaderStream(path);
+
+    final hasPathOnly = path != null && path.isNotEmpty;
+    if (hasPathOnly) return lookupType(path)?.toLowerCase() ?? "";
+
+    return "";
+  }
+
+  static Future<String> _resolveFromFileHeaderStream(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return lookupType(path)?.toLowerCase() ?? "";
+
+      final headerByteStream = file.openRead(0, magicNumbersMaxLength);
+      final headerBytes = (await headerByteStream.first) as Uint8List;
+      return lookupType(path, data: headerBytes)?.toLowerCase() ?? "";
+    } catch (_) {}
+
+    return lookupType(path)?.toLowerCase() ?? "";
   }
 }

@@ -189,26 +189,23 @@ class ChatState extends State<Chat> {
       processing = true;
     });
 
-    for (var file in attachments) {
-      await file.resolve();
-      var exif = await readExifFromBytes(file.data!);
+    for (final file in attachments) {
+      if (!await file.hasGpsData()) continue;
+      if (!mounted) return;
 
-      if (exif.keys.any((e) => e.toLowerCase().contains("gps"))) {
-        // ignore: use_build_context_synchronously
-        var confirmation = await AdaptiveDialog.confirmation(context,
-            title: file.name ?? "File",
-            confirmationText: "Send File",
-            cancelText: "Don't send file",
-            dangerous: true,
-            prompt:
-                "Location data was detected in file '${file.name}', are you sure you want to send?");
+      final confirmation = await AdaptiveDialog.confirmation(
+        context,
+        title: file.name ?? "File",
+        confirmationText: "Send File",
+        cancelText: "Don't send file",
+        dangerous: true,
+        prompt:
+            "Location data was detected in file '${file.name}', are you sure you want to send?",
+      );
 
-        if (confirmation != true) {
-          setState(() {
-            processing = false;
-          });
-          return;
-        }
+      if (confirmation != true) {
+        setState(() => processing = false);
+        return;
       }
     }
 
@@ -220,11 +217,10 @@ class ChatState extends State<Chat> {
       if (newRoom != null) {
         targetRoom = newRoom;
         targetThread = targetRoom.client.getComponent<ThreadsComponent>();
-        Log.d("Overriding room for client: ${overrideClient}");
+        Log.d("Overriding room for client: $overrideClient");
       } else {
         Log.e(
             "Failed to find correct room to send event for override client. Cancelling");
-
         return;
       }
     }
@@ -400,29 +396,23 @@ class ChatState extends State<Chat> {
 
   void onFileDropped(DropDoneDetails event) async {
     for (var file in event.files) {
-      var size = await file.length();
-      Uint8List? data;
-      if (size < 50000000) {
-        data = await file.readAsBytes();
-      }
+      final attachment = await PendingFileAttachment.fromXFile(file);
+      if (!mounted) return;
 
-      if (mounted) {
-        var attachment = PendingFileAttachment(
-            name: file.name, path: file.path, size: size, data: data);
+      final processedAttachment =
+          await AdaptiveDialog.show<PendingFileAttachment>(
+        context,
+        scrollable: false,
+        builder: (context) => AttachmentProcessor(
+          attachment: attachment,
+        ),
+      );
 
-        var processedAttachment =
-            await AdaptiveDialog.show<PendingFileAttachment>(context,
-                scrollable: false,
-                builder: (context) => AttachmentProcessor(
-                      attachment: attachment,
-                    ));
+      if (processedAttachment == null || !mounted) return;
 
-        if (processedAttachment != null) {
-          setState(() {
-            attachments.add(processedAttachment);
-          });
-        }
-      }
+      setState(() {
+        attachments.add(processedAttachment);
+      });
     }
   }
 

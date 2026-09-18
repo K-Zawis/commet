@@ -18,7 +18,7 @@ import 'package:commet/ui/navigation/adaptive_dialog.dart';
 import 'package:commet/ui/organisms/photo_albums/photos_upload_view.dart';
 import 'package:commet/utils/event_bus.dart';
 import 'package:commet/utils/text_utils.dart';
-import 'package:desktop_drop/src/drop_target.dart';
+import 'package:desktop_drop/desktop_drop.dart' show DropDoneDetails;
 import 'package:drift/drift.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -331,70 +331,77 @@ class _PhotoAlbumViewState extends State<PhotoAlbumView> {
     late List<PickedPhoto> photos;
 
     if (PlatformUtils.isAndroid) {
-      final usePhotoPicker = await AdaptiveDialog.pickOne(context,
-          items: [true, false],
-          itemBuilder: (context, item, onTapped) => SizedBox(
-                height: 50,
-                child: tiamat.TextButton(
-                  item ? "Photos" : "Browse Files",
-                  icon: item ? Icons.add_to_photos : Icons.file_open,
-                  onTap: onTapped,
-                ),
-              ));
-      if (usePhotoPicker == null) {
-        return;
-      }
+      final usePhotoPicker = await AdaptiveDialog.pickOne(
+        context,
+        items: [true, false],
+        itemBuilder: (context, item, onTapped) => SizedBox(
+          height: 50,
+          child: tiamat.TextButton(
+            item ? "Photos" : "Browse Files",
+            icon: item ? Icons.add_to_photos : Icons.file_open,
+            onTap: onTapped,
+          ),
+        ),
+      );
+
+      if (usePhotoPicker == null) return;
 
       var picker = ImagePicker();
-      late List<XFile> files;
-
-      if (usePhotoPicker) {
-        files = await picker.pickMultiImage();
-      } else {
-        files = await picker.pickMultipleMedia();
-      }
+      List<XFile> files = await (usePhotoPicker
+          ? picker.pickMultiImage()
+          : picker.pickMultipleMedia());
 
       photos = files
           .map((f) => PickedPhoto(
-              name: f.name,
-              filepath: f.path,
-              getBytes: () {
-                return f.readAsBytes();
-              }))
-          .toList();
-    } else {
-      var files = await FilePicker.platform
-          .pickFiles(allowMultiple: true, withReadStream: true);
-      if (files == null) return;
-
-      photos = files.files
-          .map((e) => PickedPhoto(
-                filepath: e.path,
-                name: e.name,
-                getBytes: () async {
-                  var result = List<int>.empty(growable: true);
-                  await for (final data in e.readStream!) {
-                    print("Read ${data.length} bytes from file");
-                    result.addAll(data);
-                  }
-
-                  print("Read all ${result.length} bytes");
-
-                  return Uint8List.fromList(result);
-                },
+                name: f.name,
+                filepath: PlatformUtils.isWeb ? null : f.path,
+                getBytes: PlatformUtils.isWeb ? f.readAsBytes : null,
               ))
           .toList();
+    } else {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        withReadStream: PlatformUtils.isWeb,
+      );
+
+      photos = result?.files
+              .map((e) => PickedPhoto(
+                    filepath: PlatformUtils.isWeb ? null : e.path,
+                    name: e.name,
+                    getBytes: PlatformUtils.isWeb
+                        ? () async {
+                            if (e.bytes != null) return e.bytes!;
+                            var result = List<int>.empty(growable: true);
+                            if (e.readStream != null) {
+                              await for (final data in e.readStream!) {
+                                result.addAll(data);
+                              }
+                            }
+                            return Uint8List.fromList(result);
+                          }
+                        : null,
+                  ))
+              .toList() ??
+          [];
     }
 
-    AdaptiveDialog.show(context,
-        builder: (_) => PhotosAlbumUploadView(photos, widget.component));
+    if (photos.isEmpty || !mounted) return;
+
+    AdaptiveDialog.show(
+      context,
+      builder: (_) => PhotosAlbumUploadView(photos, widget.component),
+    );
   }
 
   void onFileDropped(DropDoneDetails event) {
     var f = event.files
         .map((e) => PickedPhoto(
-            filepath: e.path, name: e.name, getBytes: () => e.readAsBytes()))
+              filepath: PlatformUtils.isWeb ? null : e.path,
+              name: e.name,
+              getBytes: PlatformUtils.isWeb ? e.readAsBytes : null,
+            ))
         .toList();
+
     AdaptiveDialog.show(context,
         builder: (_) => PhotosAlbumUploadView(f, widget.component));
   }

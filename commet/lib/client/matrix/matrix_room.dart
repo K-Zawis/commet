@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show File;
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:commet/client/components/component_registry.dart';
@@ -392,39 +393,32 @@ class MatrixRoom extends Room {
   }
 
   Future<MatrixProcessedAttachment?> processAttachment(
-      PendingFileAttachment attachment) async {
-    await attachment.resolve();
-    if (attachment.data == null) return null;
-
-    if (attachment.mimeType == "image/bmp") {
-      var img = MemoryImage(attachment.data!);
-      var image = await ImageUtils.imageProviderToImage(img);
-      var bytes = await image.toByteData(format: ImageByteFormat.png);
-      attachment.data = bytes!.buffer.asUint8List();
-      attachment.mimeType = "image/png";
+    PendingFileAttachment attachment,
+  ) async {
+    Uint8List? fileBytes = attachment.data;
+    if (fileBytes == null && attachment.path.hasContent) {
+      fileBytes = await File(attachment.path!).readAsBytes();
     }
 
-    var fileExtension = attachment.mimeType != null
-        ? Mime.extensionFromMime(attachment.mimeType!)
-        : null;
-    if (fileExtension == null) {
-      fileExtension = "";
-    } else {
-      fileExtension = ".${fileExtension}";
-    }
+    if (fileBytes == null) return null;
+
+    final ext = Mime.extensionFromMime(attachment.mimeType ?? "");
+    final fileExtension = ext == null ? "" : ".$ext";
+    final name = attachment.name ?? "Unknown$fileExtension";
 
     try {
       if (Mime.imageTypes.contains(attachment.mimeType)) {
-        await decodeImageFromList(attachment.data!);
+        // Warning: decodeImageFromList causes a high RAM spike.
+        await decodeImageFromList(fileBytes);
 
-        final name = attachment.name ?? "unknown${fileExtension}";
-
-        return MatrixProcessedAttachment(await matrix.MatrixImageFile.create(
-            bytes: attachment.data!,
-            name: name,
-            mimeType: attachment.mimeType,
-            nativeImplementations:
-                (client as MatrixClient).nativeImplentations));
+        return MatrixProcessedAttachment(
+          await matrix.MatrixImageFile.create(
+              bytes: fileBytes,
+              name: name,
+              mimeType: attachment.mimeType,
+              nativeImplementations:
+                  (client as MatrixClient).nativeImplentations),
+        );
       }
     } catch (error, stack) {
       // This image is probably corrupt, since it has a mime type we should be able to display,
@@ -438,19 +432,18 @@ class MatrixRoom extends Room {
       var decodedImage = await decodeImageFromList(attachment.thumbnailFile!);
 
       thumbnailImageFile = matrix.MatrixImageFile(
-          bytes: attachment.thumbnailFile!,
-          width: decodedImage.width,
-          height: decodedImage.height,
-          mimeType: attachment.thumbnailMime,
-          name: "thumbnail");
+        bytes: attachment.thumbnailFile!,
+        width: decodedImage.width,
+        height: decodedImage.height,
+        mimeType: attachment.thumbnailMime,
+        name: "thumbnail",
+      );
     }
-
-    final name = attachment.name ?? "Unknown${fileExtension}";
 
     if (Mime.videoTypes.contains(attachment.mimeType)) {
       return MatrixProcessedAttachment(
         matrix.MatrixVideoFile(
-          bytes: attachment.data!,
+          bytes: fileBytes,
           name: name,
           mimeType: attachment.mimeType,
           width: attachment.dimensions?.width.toInt(),
@@ -462,9 +455,13 @@ class MatrixRoom extends Room {
     }
 
     return MatrixProcessedAttachment(
-        matrix.MatrixFile(
-            bytes: attachment.data!, name: name, mimeType: attachment.mimeType),
-        thumbnailFile: thumbnailImageFile);
+      matrix.MatrixFile(
+        bytes: fileBytes,
+        name: name,
+        mimeType: attachment.mimeType,
+      ),
+      thumbnailFile: thumbnailImageFile,
+    );
   }
 
   @override

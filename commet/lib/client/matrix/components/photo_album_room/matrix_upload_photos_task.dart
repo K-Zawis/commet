@@ -3,11 +3,7 @@ import 'package:commet/client/attachment.dart';
 import 'package:commet/client/components/photo_album_room/photo_album_room_component.dart';
 import 'package:commet/client/matrix/matrix_room.dart';
 import 'package:commet/utils/background_tasks/background_task_manager.dart';
-import 'package:exif/exif.dart';
-import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-
-import 'package:image/image.dart' as img;
+import 'package:commet/utils/image_utils.dart';
 
 class MatrixUploadPhotosTask implements BackgroundTaskWithIntegerProgress {
   List<PickedPhoto> files;
@@ -16,6 +12,7 @@ class MatrixUploadPhotosTask implements BackgroundTaskWithIntegerProgress {
   bool extractMetadata;
   bool sendOriginal;
 
+  @override
   BackgroundTaskStatus status = BackgroundTaskStatus.running;
 
   StreamController<int> progressStream = StreamController.broadcast();
@@ -57,18 +54,14 @@ class MatrixUploadPhotosTask implements BackgroundTaskWithIntegerProgress {
     for (var i = 0; i < files.length; i++) {
       var file = files[i];
 
-      var name = file.name;
-      print("Loading bytes");
-      var imageData = await file.getBytes();
-      print("Loaded bytes");
+      var attachment = await file.toPendingAttachment();
+
       Map<String, dynamic> extraInfo = {};
 
       if (extractMetadata) {
         Map<String, dynamic> exifInfo = {};
 
-        print("Loading exif data");
-        var exif = await readExifFromBytes(imageData);
-        print("Finished loading exif");
+        var exif = await attachment.readExif();
 
         for (var key in [
           "EXIF DateTimeOriginal",
@@ -80,10 +73,10 @@ class MatrixUploadPhotosTask implements BackgroundTaskWithIntegerProgress {
             if (exifData == null) continue;
 
             if (exifData.tagType == "ASCII") {
-              exifInfo[key] = {};
-
-              exifInfo[key]["tag_type"] = exifData.tagType;
-              exifInfo[key]["value"] = exifData.printable;
+              exifInfo[key] = {
+                "tag_type": exifData.tagType,
+                "value": exifData.printable
+              };
             }
           }
         }
@@ -94,25 +87,24 @@ class MatrixUploadPhotosTask implements BackgroundTaskWithIntegerProgress {
       }
 
       if (!sendOriginal) {
-        imageData = await compute((bytes) {
-          print("Decoding image");
-          var decoder = img.findDecoderForData(bytes);
-          var image = decoder!.decode(bytes)!;
-          image.exif.clear();
-          print("Reencoding image");
-          return img.encodeJpg(image, quality: 90);
-        }, imageData);
-        print("Finished encoding image");
+        final result = await ImageUtils.processImage(
+          path: attachment.path,
+          data: attachment.data,
+          name: attachment.name,
+          sourceMimeType: attachment.mimeType ?? 'image/jpeg',
+          quality: 90,
+        );
 
-        var rawName = p.basenameWithoutExtension(name);
-        name = "$rawName.jpeg";
+        attachment = await PendingFileAttachment.fromProcessedImage(result);
       }
 
-      var processed = await room.processAttachment(
-          PendingFileAttachment(name: name, data: imageData));
+      var processed = await room.processAttachment(attachment);
 
-      await room.sendMessage(
-          processedAttachments: [processed!], fileExtraContent: extraInfo);
+      if (processed != null) {
+        await room.sendMessage(
+            processedAttachments: [processed], fileExtraContent: extraInfo);
+      }
+
       current += 1;
       progressStream.add(current);
     }

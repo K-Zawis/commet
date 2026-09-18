@@ -191,6 +191,10 @@ class MessageInputState extends State<MessageInput> {
     setInputTextSubscription?.cancel();
     preferencesSubscription?.cancel();
     onScopePopInvoked?.cancel();
+
+    emojiSearchFocus.dispose();
+    stickerSearchFocus.dispose();
+    gifSearchFocus.dispose();
     super.dispose();
   }
 
@@ -1145,85 +1149,92 @@ class MessageInputState extends State<MessageInput> {
     var pickers = [
       if (PlatformUtils.isAndroid)
         AttachmentPicker(
-            icon: Icons.photo,
-            label: "Gallery",
-            execute: () async {
-              var picker = ImagePicker();
-              var result = await picker.pickMultiImage();
-              for (var file in result) {
-                var data = await file.readAsBytes();
-                await handlePickedAttachment(PendingFileAttachment(
-                    name: file.name,
-                    mimeType: file.mimeType,
-                    size: data.lengthInBytes,
-                    data: data));
-              }
-            }),
-      AttachmentPicker(
-          icon: Icons.attach_file,
-          label: "File",
+          icon: Icons.photo,
+          label: "Gallery",
           execute: () async {
-            FilePickerResult? result = await FilePicker.platform.pickFiles(
-                type: FileType.any, withData: true, allowMultiple: true);
-            if (result == null) return;
-
-            for (var file in result.files) {
-              var attachment = PendingFileAttachment(
-                  name: file.name,
-                  path: PlatformUtils.isWeb ? null : file.path,
-                  data: file.bytes,
-                  size: file.bytes?.length);
-
+            var picker = ImagePicker();
+            var result = await picker.pickMultiImage();
+            for (var file in result) {
+              final attachment = await PendingFileAttachment.fromXFile(file);
               await handlePickedAttachment(attachment);
             }
-          }),
+          },
+        ),
+      AttachmentPicker(
+        icon: Icons.attach_file,
+        label: "File",
+        execute: () async {
+          FilePickerResult? result = await FilePicker.platform.pickFiles(
+            type: FileType.any,
+            withData: PlatformUtils.isWeb,
+            allowMultiple: true,
+          );
+          if (result == null) return;
+
+          for (var file in result.files) {
+            final PendingFileAttachment attachment;
+            if (PlatformUtils.isWeb && file.bytes != null) {
+              attachment = PendingFileAttachment.fromBytes(
+                data: file.bytes!,
+                name: file.name,
+              );
+            } else if (file.path != null) {
+              attachment = await PendingFileAttachment.fromPath(
+                path: file.path!,
+                name: file.name,
+                size: file.size,
+              );
+            } else {
+              continue;
+            }
+
+            await handlePickedAttachment(attachment);
+          }
+        },
+      ),
       if (PlatformUtils.isAndroid && preferences.developerMode.value)
         AttachmentPicker(
-            icon: Icons.perm_media,
-            label: "Media",
-            execute: () async {
-              var picker = ImagePicker();
-              var result = await picker.pickMultipleMedia();
-              for (var file in result) {
-                var data = await file.readAsBytes();
-                await handlePickedAttachment(PendingFileAttachment(
-                    name: file.name,
-                    mimeType: file.mimeType,
-                    size: data.lengthInBytes,
-                    data: data));
-              }
-            }),
+          icon: Icons.perm_media,
+          label: "Media",
+          execute: () async {
+            var picker = ImagePicker();
+            var result = await picker.pickMultipleMedia();
+            for (var file in result) {
+              final attachment = await PendingFileAttachment.fromXFile(file);
+              await handlePickedAttachment(attachment);
+            }
+          },
+        ),
       if (PlatformUtils.isAndroid)
         AttachmentPicker(
-            icon: Icons.camera_alt,
-            label: "Take a photo",
-            execute: () async {
-              var picker = ImagePicker();
-              var file = await picker.pickImage(source: ImageSource.camera);
-              if (file == null) return;
+          icon: Icons.camera_alt,
+          label: "Take a photo",
+          execute: () async {
+            var picker = ImagePicker();
+            var file = await picker.pickImage(source: ImageSource.camera);
+            if (file == null) return;
 
-              var data = await file.readAsBytes();
-              await handlePickedAttachment(PendingFileAttachment(
-                  name: file.name,
-                  mimeType: file.mimeType,
-                  size: data.lengthInBytes,
-                  data: data));
-            }),
+            final attachment = await PendingFileAttachment.fromXFile(file);
+            await handlePickedAttachment(attachment);
+          },
+        ),
     ];
 
     if (pickers.length == 1) {
       pickers.first.execute();
     } else {
-      final picker = await AdaptiveDialog.pickOne(context,
-          items: pickers,
-          itemBuilder: (context, item, onTapped) => SizedBox(
-                height: 50,
-                child: tiamat.TextButton(
-                  item.label,
-                  icon: item.icon,
-                  onTap: onTapped,
-                ),
-              ));
+      final picker = await AdaptiveDialog.pickOne(
+        context,
+        items: pickers,
+        itemBuilder: (context, item, onTapped) => SizedBox(
+          height: 50,
+          child: tiamat.TextButton(
+            item.label,
+            icon: item.icon,
+            onTap: onTapped,
+          ),
+        ),
+      );
 
       picker?.execute();
     }
@@ -1380,23 +1391,27 @@ class MessageInputState extends State<MessageInput> {
 
   Future<void> readImageFromClipboard() async {
     var image = await Pasteboard.image;
-    if (image == null) {
-      return;
-    }
+    if (image == null) return;
 
-    var processedAttachment =
-        await AdaptiveDialog.show<PendingFileAttachment>(context,
-            scrollable: false,
-            builder: (context) => AttachmentProcessor(
-                  attachment:
-                      PendingFileAttachment(data: image, size: image.length),
-                ));
+    final attachment = PendingFileAttachment.fromBytes(
+      data: image,
+    );
 
-    if (processedAttachment != null) {
-      setState(() {
-        widget.addAttachment?.call(processedAttachment);
-      });
-    }
+    if (!mounted) return;
+
+    var processedAttachment = await AdaptiveDialog.show<PendingFileAttachment>(
+      context,
+      scrollable: false,
+      builder: (context) => AttachmentProcessor(
+        attachment: attachment,
+      ),
+    );
+
+    if (processedAttachment == null || !mounted) return;
+
+    setState(() {
+      widget.addAttachment?.call(processedAttachment);
+    });
   }
 
   void onPopped(ScopePopped event) {
