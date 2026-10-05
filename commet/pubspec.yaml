@@ -1,5 +1,5 @@
 name: commet
-version: 0.4.2+994
+version: 0.5.0+992
 publish_to: none
 description: Your space to connect
 environment: 
@@ -14,7 +14,7 @@ dependencies:
   matrix_widget_api:
     path: ../widgets/matrix_widget_api
   crypto: ^3.0.2
-  desktop_drop: ^0.4.1
+  desktop_drop: ^0.8.4 
   desktop_notifications: ^0.6.3
   device_info_plus: ^12.2.0
   flutter_background_service: ^5.0.5
@@ -136,6 +136,8 @@ dependencies:
   
   launcher_entry:
     git: https://github.com/commetchat/launcher_entry.git
+  app_links: ^7.0.0
+  win32_registry: ^2.1.0
 
 
 dependency_overrides:
@@ -154,6 +156,13 @@ dependency_overrides:
       url: https://github.com/Airyzz/dart-lang-tools
       ref: main
       path: pkgs/markdown
+
+  ## fixes: https://github.com/commetchat/commet/issues/1068
+  desktop_drop:
+    git:
+      url: https://github.com/commetchat/mixin-flutter-plugins.git
+      ref: drag-drop-linux-fix
+      path: ./packages/desktop_drop
 
   ## Fixes https://github.com/MixinNetwork/flutter-plugins/issues/457
   desktop_webview_window:
@@ -256,6 +265,7 @@ msix_config:
   display_name: Commet
   identity_name: chat.commet.app.windows-a33bc9ba
   msix_version: 1.0.4.0
+  protocol_activation: commetchat
   toast_activator: 
     clsid: 7685C041-9D17-4112-8FC4-386743A3D53E
     arguments: -ToastActivated

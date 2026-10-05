@@ -453,8 +453,14 @@ class Preferences {
       defaultGetter: () => PlatformUtils.isAndroid ? false : true,
       defaultValue: false);
 
+  BoolPreference selectAutoCompleteSuggestion =
+      BoolPreference("select_auto_complete_suggestion", defaultValue: false);
+
   BoolPreference automaticallyOpenSpace =
       BoolPreference("open_space_on_room_navigation", defaultValue: true);
+
+  BoolPreference pauseAnimationsWhenNotFocused =
+      BoolPreference("pause_animations_When_not_focused", defaultValue: true);
 
   BoolPreference autoRotateImages =
       BoolPreference("lightbox_rotate_images", defaultValue: false);

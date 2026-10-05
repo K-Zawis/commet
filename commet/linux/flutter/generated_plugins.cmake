@@ -10,6 +10,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_image_compress_linux
   flutter_timezone
   flutter_webrtc
+  gtk
   hotkey_manager_linux
   livekit_client
   media_kit_libs_linux
